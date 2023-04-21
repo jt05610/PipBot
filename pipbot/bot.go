@@ -12,17 +12,85 @@ import (
 )
 
 type PipBot struct {
-	Layout   *Layout
-	Current  *Position
-	client   serial.Port
-	busy     atomic.Bool
-	rx       chan []byte
-	Rate     float64
-	TipStart int
+	Layout     *Layout
+	Current    *Position
+	TipChannel <-chan *Position
+	client     serial.Port
+	busy       atomic.Bool
+	rx         chan []byte
+	Rate       float64
+	TipStart   int
+	curTip     int
+	cushion    float32
+}
+
+const (
+	TipOffClear   float32 = 85
+	TipOnClear    float32 = 142
+	CushionVolume float32 = 50
+)
+
+// Init gets ready to run a protocol. Note that it automatically selects the last matrix as the tip matrix -- this will
+// not be hardcoded in less time pressed versions :)
+func (b *PipBot) Init() {
+	b.TipChannel = b.Layout.Matrices[len(b.Layout.Matrices)-1].Channel()
+	for b.curTip != b.TipStart {
+		_ = <-b.TipChannel
+		b.curTip++
+	}
+	b.Home()
+	target := b.Current
+	target.Z = TipOffClear
+
+	b.Dispense(25)
+	time.Sleep(time.Duration(500) * time.Millisecond)
+	b.ResetCush()
 }
 
 func (b *PipBot) Bytes() []byte {
 	return <-b.rx
+}
+
+// getTip gets the next tip position and increments the counter
+func (b *PipBot) getTip() *Position {
+	b.curTip++
+	return <-b.TipChannel
+}
+
+func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
+	// get increment tip id and pickup the tip
+	t := b.getTip()
+	b.Do(t)
+	t.Z = TipOnClear
+	b.Do(t)
+
+	// go to source and insert into fluid
+	t = src.Position
+	b.GoTo(t)
+
+	// draw fluid
+	b.Pickup(vol)
+
+	// remove from container
+	t.Z = TipOnClear
+	b.Do(t)
+
+	// go to dest and insert into fluid
+	t = dest.Position
+	b.GoTo(t)
+
+	// dispense fluid
+	b.Dispense(vol)
+
+	// remove from container
+	t.Z = TipOnClear
+	b.Do(t)
+
+	b.ResetCush()
+
+	if eject {
+		b.Eject()
+	}
 }
 
 func NewPipBot(port string, baud int, firstTip int) *PipBot {
@@ -31,6 +99,7 @@ func NewPipBot(port string, baud int, firstTip int) *PipBot {
 		rx:       make(chan []byte),
 		Layout:   MakeGrid(),
 		TipStart: firstTip,
+		curTip:   0,
 	}
 
 	ret.client, err = serial.Open(port, &serial.Mode{
@@ -45,6 +114,52 @@ func NewPipBot(port string, baud int, firstTip int) *PipBot {
 
 func (b *PipBot) Close() {
 	_ = b.client.Close()
+}
+
+func (b *PipBot) Do(target *Position) {
+	dX := float64(target.X - b.Current.X)
+	dY := float64(target.Y - b.Current.Y)
+	dZ := float64(target.Z - b.Current.Z)
+	b.GoTo(target)
+	if (dX != 0) || (dY != 0) {
+		dP := math.Sqrt(math.Pow(dX, 2) + math.Pow(dY, 2))
+		t := dP / b.Rate
+		time.Sleep(time.Duration(t) * time.Second)
+	}
+	if dZ != 0 {
+		t := math.Abs(dZ / 10)
+		time.Sleep(time.Duration(t*1000000) * time.Microsecond)
+	}
+}
+
+func (b *PipBot) Pickup(volume float32) {
+	travel := volume / 10
+	m := []byte(fmt.Sprintf("G1 E-%v\n", travel))
+	_, err := b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	time.Sleep(time.Duration(500) * time.Millisecond)
+}
+
+func (b *PipBot) Dispense(volume float32) {
+	travel := (volume + b.cushion) / 10
+	m := []byte(fmt.Sprintf("G1 E%v\n", travel))
+	_, err := b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	time.Sleep(time.Duration(500) * time.Millisecond)
+}
+
+func (b *PipBot) ResetCush() {
+	travel := b.cushion / 10
+	m := []byte(fmt.Sprintf("G1 E-%v\n", travel))
+	_, err := b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	time.Sleep(time.Duration(500) * time.Millisecond)
 }
 
 func (b *PipBot) Home() {
@@ -96,24 +211,15 @@ func (b *PipBot) GoTo(p *Position) {
 	b.Current = target
 }
 
-func (b *PipBot) Clear() {
-	target := &Position{
-		X: 0,
-		Y: 0,
-		Z: 85,
-	}
-	b.GoTo(target)
-}
-
 func (b *PipBot) Eject() {
 	target := &Position{
 		X: 10,
 		Y: b.Current.Y,
 		Z: 156,
 	}
-	b.GoTo(target)
+	b.Do(target)
 	target.Z = 85
-	b.GoTo(target)
+	b.Do(target)
 }
 
 func (b *PipBot) Listen(ctx context.Context) bool {
