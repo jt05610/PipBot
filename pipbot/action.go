@@ -18,7 +18,7 @@ func (p *Position) XY(rate ...float64) []byte {
 	} else {
 		fr = 1000
 	}
-	return []byte(fmt.Sprintf("G0 F%v X%v Y%v\n", fr, p.X, p.Y))
+	return []byte(fmt.Sprintf("G0 F%v X%v Y%v Z%v\n", fr, p.X, p.Y, p.Z))
 }
 
 func (p *Position) Low(rate ...float64) []byte {
@@ -28,11 +28,12 @@ func (p *Position) Low(rate ...float64) []byte {
 	} else {
 		fr = 1000
 	}
-	return []byte(fmt.Sprintf("G0 F%v X%v Y%v\n", fr, p.X, p.Y))
+	return []byte(fmt.Sprintf("G0 F%v Z%v\n", fr, p.Z))
 }
 
 type Transfer struct {
 	Tip       *Position
+	TipChange bool
 	Src       *Position
 	Dest      *Position
 	Volume    float32
@@ -75,6 +76,7 @@ func (t *Transfer) Heat() {
 
 func (h *Heat) Bytes() [][]byte {
 	return [][]byte{}
+
 }
 
 type Shake struct {
