@@ -27,24 +27,55 @@ type PipBot struct {
 const (
 	TipOffClear   float32 = 85
 	TipOnClear    float32 = 142
-	CushionVolume float32 = 50
+	CushionVolume float32 = 25
 )
+
+func (b *PipBot) SetupDispenser() {
+	m := []byte("M302 S1\n")
+
+	_, err := b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	m = []byte("M82\n")
+
+	_, err = b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	m = []byte("G92 E0\n")
+	_, err = b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+}
 
 // Init gets ready to run a protocol. Note that it automatically selects the last matrix as the tip matrix -- this will
 // not be hardcoded in less time pressed versions :)
 func (b *PipBot) Init() {
-	b.TipChannel = b.Layout.Matrices[len(b.Layout.Matrices)-1].Channel()
+	b.TipChannel = b.Layout.Matrices[3].Channel()
+	b.cushion = CushionVolume
 	for b.curTip != b.TipStart {
-		_ = <-b.TipChannel
 		b.curTip++
+		_ = <-b.TipChannel
 	}
 	b.Home()
+	b.SetupDispenser()
 	target := b.Current
 	target.Z = TipOffClear
-
-	b.Dispense(25)
-	time.Sleep(time.Duration(500) * time.Millisecond)
+	m := []byte("G92 E-30\n")
+	_, err := b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	b.Dispense()
 	b.ResetCush()
+	m = []byte("G92 E0\n")
+	_, err = b.client.Write(m)
+	if err != nil {
+		panic(err)
+	}
+	b.Do(target)
 }
 
 func (b *PipBot) Bytes() []byte {
@@ -66,7 +97,7 @@ func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
 
 	// go to source and insert into fluid
 	t = src.Position
-	b.GoTo(t)
+	b.Do(t)
 
 	// draw fluid
 	b.Pickup(vol)
@@ -77,11 +108,11 @@ func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
 
 	// go to dest and insert into fluid
 	t = dest.Position
-	b.GoTo(t)
+	b.Do(t)
 
 	// dispense fluid
-	b.Dispense(vol)
-
+	b.Dispense()
+	time.Sleep(time.Duration(1) * time.Second)
 	// remove from container
 	t.Z = TipOnClear
 	b.Do(t)
@@ -134,7 +165,9 @@ func (b *PipBot) Do(target *Position) {
 
 func (b *PipBot) Pickup(volume float32) {
 	travel := volume / 10
-	m := []byte(fmt.Sprintf("G1 E-%v\n", travel))
+	target := Position{Z: 85}
+	target.Z = target.Z + 1
+	m := []byte(fmt.Sprintf("G1 F500 E-%v\n", travel))
 	_, err := b.client.Write(m)
 	if err != nil {
 		panic(err)
@@ -142,9 +175,8 @@ func (b *PipBot) Pickup(volume float32) {
 	time.Sleep(time.Duration(500) * time.Millisecond)
 }
 
-func (b *PipBot) Dispense(volume float32) {
-	travel := (volume + b.cushion) / 10
-	m := []byte(fmt.Sprintf("G1 E%v\n", travel))
+func (b *PipBot) Dispense() {
+	m := []byte("G1 F500 E0\n")
 	_, err := b.client.Write(m)
 	if err != nil {
 		panic(err)
@@ -153,12 +185,12 @@ func (b *PipBot) Dispense(volume float32) {
 }
 
 func (b *PipBot) ResetCush() {
-	travel := b.cushion / 10
-	m := []byte(fmt.Sprintf("G1 E-%v\n", travel))
+	m := []byte("G1 F500 E0\n")
 	_, err := b.client.Write(m)
 	if err != nil {
 		panic(err)
 	}
+
 	time.Sleep(time.Duration(500) * time.Millisecond)
 }
 

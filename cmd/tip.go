@@ -15,7 +15,7 @@ var tipCmd = &cobra.Command{
 	Short: "use to get tip",
 	Long:  `tip gets tips `,
 	Run: func(cmd *cobra.Command, args []string) {
-		bot := pb.NewPipBot(pb.Port, pb.Baud, 15)
+		bot := pb.NewPipBot(pb.Port, pb.Baud, 0)
 		bot.Rate = 500
 		ctx := context.Background()
 		_ = bot.Listen(ctx)
@@ -23,7 +23,7 @@ var tipCmd = &cobra.Command{
 		bp := bot.Layout.Matrices[2]
 		wp := bot.Layout.Matrices[1]
 
-		bot.Transfer(bp.Cells[0][0], wp.Cells[0][0], 200, true)
+		bot.Transfer(bp.Cells[0][0], wp.Cells[1][0], 200, true)
 	},
 }
 
