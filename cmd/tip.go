@@ -20,10 +20,10 @@ var tipCmd = &cobra.Command{
 		ctx := context.Background()
 		_ = bot.Listen(ctx)
 		bot.Init()
-		bp := bot.Layout.Matrices[2]
-		wp := bot.Layout.Matrices[1]
-
-		bot.Transfer(bp.Cells[0][0], wp.Cells[1][0], 200, true)
+		//bp := bot.Layout.Matrices[2]
+		//wp := bot.Layout.Matrices[1]
+		bot.Plan("recipe.csv")
+		bot.Run()
 	},
 }
 

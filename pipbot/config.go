@@ -1,6 +1,9 @@
 package pipbot
 
-const Port = "/dev/cu.usbserial-1110"
+const Port = "COM5"
+
+// const Port = "/dev/cu.usbserial-1110"
+
 const Baud = 115200
 
 func MakeGrid() *Layout {

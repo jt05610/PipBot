@@ -3,25 +3,25 @@ package pipbot
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"fmt"
-	"go.bug.st/serial"
-	"math"
-	"strings"
+	"os"
 	"sync/atomic"
-	"time"
 )
 
 type PipBot struct {
 	Layout     *Layout
 	Current    *Position
 	TipChannel <-chan *Position
-	client     serial.Port
+	client     *os.File
 	busy       atomic.Bool
 	rx         chan []byte
 	Rate       float64
 	TipStart   int
 	curTip     int
 	cushion    float32
+	steps      []*TransParams
+	hasTip     bool
 }
 
 const (
@@ -49,6 +49,10 @@ func (b *PipBot) SetupDispenser() {
 		panic(err)
 	}
 }
+
+const (
+	OutFile = "runFile.gcode"
+)
 
 // Init gets ready to run a protocol. Note that it automatically selects the last matrix as the tip matrix -- this will
 // not be hardcoded in less time pressed versions :)
@@ -90,13 +94,17 @@ func (b *PipBot) getTip() *Position {
 
 func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
 	// get increment tip id and pickup the tip
-	t := b.getTip()
-	b.Do(t)
-	t.Z = TipOnClear
-	b.Do(t)
+	if !b.hasTip {
+		t := b.getTip()
+		b.hasTip = true
+		b.Do(t)
+		t.Z = TipOnClear
+		b.Do(t)
+	}
 
 	// go to source and insert into fluid
-	t = src.Position
+	t := src.Position
+	tmp := t.Z
 	b.Do(t)
 
 	// draw fluid
@@ -105,14 +113,13 @@ func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
 	// remove from container
 	t.Z = TipOnClear
 	b.Do(t)
-
+	t.Z = tmp
 	// go to dest and insert into fluid
 	t = dest.Position
 	b.Do(t)
 
 	// dispense fluid
 	b.Dispense()
-	time.Sleep(time.Duration(1) * time.Second)
 	// remove from container
 	t.Z = TipOnClear
 	b.Do(t)
@@ -121,6 +128,13 @@ func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
 
 	if eject {
 		b.Eject()
+		b.hasTip = false
+	}
+
+	m := []byte("M400\n")
+	_, err := b.client.Write(m)
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -131,11 +145,10 @@ func NewPipBot(port string, baud int, firstTip int) *PipBot {
 		Layout:   MakeGrid(),
 		TipStart: firstTip,
 		curTip:   0,
+		hasTip:   false,
 	}
 
-	ret.client, err = serial.Open(port, &serial.Mode{
-		BaudRate: baud,
-	})
+	ret.client, err = os.Create(OutFile)
 
 	if err != nil {
 		panic(err)
@@ -148,19 +161,7 @@ func (b *PipBot) Close() {
 }
 
 func (b *PipBot) Do(target *Position) {
-	dX := float64(target.X - b.Current.X)
-	dY := float64(target.Y - b.Current.Y)
-	dZ := float64(target.Z - b.Current.Z)
 	b.GoTo(target)
-	if (dX != 0) || (dY != 0) {
-		dP := math.Sqrt(math.Pow(dX, 2) + math.Pow(dY, 2))
-		t := dP / b.Rate
-		time.Sleep(time.Duration(t) * time.Second)
-	}
-	if dZ != 0 {
-		t := math.Abs(dZ / 10)
-		time.Sleep(time.Duration(t*1000000) * time.Microsecond)
-	}
 }
 
 func (b *PipBot) Pickup(volume float32) {
@@ -172,7 +173,6 @@ func (b *PipBot) Pickup(volume float32) {
 	if err != nil {
 		panic(err)
 	}
-	time.Sleep(time.Duration(500) * time.Millisecond)
 }
 
 func (b *PipBot) Dispense() {
@@ -181,7 +181,6 @@ func (b *PipBot) Dispense() {
 	if err != nil {
 		panic(err)
 	}
-	time.Sleep(time.Duration(500) * time.Millisecond)
 }
 
 func (b *PipBot) ResetCush() {
@@ -190,8 +189,6 @@ func (b *PipBot) ResetCush() {
 	if err != nil {
 		panic(err)
 	}
-
-	time.Sleep(time.Duration(500) * time.Millisecond)
 }
 
 func (b *PipBot) Home() {
@@ -200,17 +197,7 @@ func (b *PipBot) Home() {
 	if err != nil {
 		panic(err)
 	}
-	buf := make([]byte, 1024)
-	for wait := true; wait; {
-		n, err := b.client.Read(buf)
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println(string(buf[:n]))
-		if !strings.Contains(string(buf[:n]), "processing") {
-			wait = false
-		}
-	}
+
 	b.Current = &Position{
 		X: 0,
 		Y: 0,
@@ -218,13 +205,84 @@ func (b *PipBot) Home() {
 	}
 }
 
-func TimeEst(start, end *Position, rate float64) time.Duration {
-	dX := float64(end.X - start.X)
-	dY := float64(end.Y - start.Y)
-	dZ := float64(end.Z - start.Z)
-	tot := math.Sqrt(math.Pow(dX, 2) + math.Pow(dY, 2) + math.Pow(dZ, 2))
-	timeUs := int64((tot / rate) * float64(1000000))
-	return time.Duration(timeUs) * time.Microsecond
+type TransParams struct {
+	SrcRow int
+	SrcCol int
+	DstRow int
+	DstCol int
+	eject  bool
+}
+
+func (b *PipBot) Run() {
+	for i, s := range b.steps {
+		fmt.Println(fmt.Sprintf("Step %v/%v", i, len(b.steps)))
+		b.Transfer(b.Layout.Matrices[2].Cells[s.SrcRow][s.SrcCol], b.Layout.Matrices[1].Cells[s.DstRow][s.DstCol], 100, s.eject)
+	}
+}
+
+func (b *PipBot) Plan(file string) {
+	b.steps = make([]*TransParams, 0)
+	f, err := os.Open(file)
+	if err != nil {
+		panic(err)
+	}
+
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
+
+	rdr := csv.NewReader(f)
+	rows, err := rdr.ReadAll()
+	if err != nil {
+		panic(err)
+	}
+
+	for i, row := range rows {
+		for j, cell := range row[:12] {
+			eject := false
+			if j < 11 {
+				if row[j+1] != cell {
+					eject = true
+				}
+			}
+			if j == 11 {
+				if i != 7 {
+					if rows[i+1][0] != cell {
+						eject = true
+					}
+				}
+			}
+			switch cell {
+			case "Blue":
+				t := &TransParams{
+					SrcRow: 0,
+					SrcCol: 0,
+					DstRow: i,
+					DstCol: j,
+					eject:  eject,
+				}
+				b.steps = append(b.steps, t)
+			case "Red":
+				t := &TransParams{
+					SrcRow: 0,
+					SrcCol: 1,
+					DstRow: i,
+					DstCol: j,
+					eject:  eject,
+				}
+				b.steps = append(b.steps, t)
+			case "Orange":
+				t := &TransParams{
+					SrcRow: 0,
+					SrcCol: 2,
+					DstRow: i,
+					DstCol: j,
+					eject:  eject,
+				}
+				b.steps = append(b.steps, t)
+			}
+		}
+	}
 }
 
 func (b *PipBot) GoTo(p *Position) {
@@ -247,7 +305,7 @@ func (b *PipBot) Eject() {
 	target := &Position{
 		X: 10,
 		Y: b.Current.Y,
-		Z: 156,
+		Z: 154,
 	}
 	b.Do(target)
 	target.Z = 85
@@ -265,8 +323,9 @@ func (b *PipBot) Listen(ctx context.Context) bool {
 			case <-ctx.Done():
 				cont = false
 			default:
-				b.rx <- scan.Bytes()
-				time.Sleep(time.Duration(100) * time.Millisecond)
+				bytes := scan.Bytes()
+				b.rx <- bytes
+				fmt.Println(string(bytes))
 			}
 		}
 	}()
