@@ -1,0 +1,62 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator db {
+  provider = "go run github.com/steebchen/prisma-client-go"
+}
+
+model Position {
+  id     String @id @default(cuid())
+  x      Float
+  y      Float
+  z      Float
+  gridId String @unique
+  grid   Grid   @relation(fields: [gridId], references: [id])
+}
+
+model Grid {
+  id       String    @id @default(cuid())
+  name     String
+  home     Position?
+  matrixId String
+  matrix   Matrix    @relation(fields: [matrixId], references: [id])
+  rowSpace Float
+  colSpace Float
+  nRows    Int
+  nCols    Int
+}
+
+model Matrix {
+  id      String   @id @default(cuid())
+  name    String
+  grids   Grid[]
+  recipes Recipe[]
+}
+
+model Transfer {
+  id             String  @id @default(cuid())
+  sampleId       String
+  name           String?
+  group          String?
+  sourceGrid     String
+  sourcePosition String
+  sourceAspirate Boolean
+  destGrid       String
+  destPosition   String
+  destAspirate   Boolean
+  volume         Float
+  recipeId       String
+  recipe         Recipe  @relation(fields: [recipeId], references: [id])
+}
+
+model Recipe {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  matrixId    String
+  matrix      Matrix     @relation(fields: [matrixId], references: [id])
+  transfers   Transfer[]
+  downloadUrl String?
+}
