@@ -26,7 +26,8 @@ type PipBot struct {
 
 const (
 	TipOffClear   float32 = 85
-	TipOnClear    float32 = 142
+	TipBoxClear   float32 = 142
+	TipOnClear    float32 = 100
 	CushionVolume float32 = 25
 )
 
@@ -98,7 +99,7 @@ func (b *PipBot) Transfer(src *Cell, dest *Cell, vol float32, eject bool) {
 		t := b.getTip()
 		b.hasTip = true
 		b.Do(t)
-		t.Z = TipOnClear
+		t.Z = TipBoxClear
 		b.Do(t)
 	}
 
