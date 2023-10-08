@@ -1,0 +1,105 @@
+# GraphQL schema example
+#
+# https://gqlgen.com/getting-started/
+
+type Node {
+    grid: String!
+    position: String!
+    aspirate: Boolean!
+}
+
+type Position {
+    x: Float!
+    y: Float!
+    z: Float!
+}
+
+type Grid {
+    id: ID!
+    name: String!
+    home: Position!
+    row_space: Float!
+    col_space: Float!
+    n_rows: Int!
+    n_cols: Int!
+}
+
+type Matrix {
+    id: ID!
+    name: String!
+    grids: [Grid!]!
+}
+
+type Transfer {
+    id: ID!
+    sampleId: ID!
+    name: String
+    group: String
+    source: Node!
+    dest: Node!
+    volume: Float!
+}
+
+type Recipe {
+    id: ID!
+    name: String!
+    matrix: Matrix!
+    transfers: [Transfer!]!
+    download: String!
+}
+
+type Query {
+    matrices: [Matrix!]!
+    grids(matrixId: ID!): [Grid!]!
+    recipes: [Recipe!]!
+    recipe(id: ID!): Recipe!
+}
+
+input NewPosition {
+    X: Float!
+    Y: Float!
+    Z: Float!
+}
+
+input NewGrid {
+    matrixId: ID!
+    name: String!
+    home: NewPosition!
+    rowSpace: Float!
+    colSpace: Float!
+    n_rows: Int!
+    n_cols: Int!
+}
+
+input NewMatrix {
+    name: String!
+    grids: [NewGrid!]
+}
+
+input NewNode {
+    grid: String!
+    position: String!
+    aspirate: Boolean
+}
+
+input NewTransfer {
+    sampleId: ID!
+    name: String
+    group: String
+    source: NewNode!
+    dest: NewNode!
+    volume: Float!
+}
+
+input NewRecipe {
+    name: String!
+    matrixId: ID!
+    transfers: [NewTransfer!]
+}
+
+type Mutation {
+    createMatrix(matrix: NewMatrix!): Matrix!
+    addGrid(matrixId: ID!, grid: NewGrid!): Grid!
+    createRecipe(recipe: NewRecipe!): Recipe!
+    addTransfer(recipeId: ID!, transfer: NewTransfer!): Transfer!
+}

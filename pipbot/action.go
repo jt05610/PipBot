@@ -76,7 +76,6 @@ func (t *Transfer) Heat() {
 
 func (h *Heat) Bytes() [][]byte {
 	return [][]byte{}
-
 }
 
 type Shake struct {
